@@ -425,6 +425,10 @@ async function runQuery(
             NANOCLAW_IS_MAIN: containerInput.isMain ? '1' : '0',
           },
         },
+        'memory-store': {
+          type: 'http',
+          url: 'http://host.docker.internal:8051/mcp/',
+        },
       },
       hooks: {
         PreCompact: [{ hooks: [createPreCompactHook(containerInput.assistantName)] }],
