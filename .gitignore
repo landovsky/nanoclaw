@@ -13,10 +13,13 @@ logs/
 groups/*
 !groups/main/
 !groups/global/
+!groups/swan_crm/
 groups/main/*
 groups/global/*
+groups/swan_crm/*
 !groups/main/CLAUDE.md
 !groups/global/CLAUDE.md
+!groups/swan_crm/CLAUDE.md
 
 # Secrets
 *.keys.json
