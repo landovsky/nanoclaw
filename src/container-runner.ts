@@ -43,6 +43,7 @@ export interface ContainerInput {
   isScheduledTask?: boolean;
   assistantName?: string;
   script?: string;
+  model?: string; // Default: claude-sonnet-4-6
 }
 
 export interface ContainerOutput {
