@@ -2,7 +2,7 @@
  * Container Runner for NanoClaw
  * Spawns agent execution in containers and handles IPC
  */
-import { ChildProcess, spawn } from 'child_process';
+import { ChildProcess, execFileSync, spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 
@@ -224,9 +224,49 @@ function buildVolumeMounts(
   return mounts;
 }
 
+/**
+ * Decrypt per-group SOPS secrets and return as key-value pairs.
+ * Secrets file: groups/{folder}/secrets.env (encrypted with SOPS + AGE).
+ * Returns empty array if no secrets file exists or decryption fails.
+ */
+function decryptGroupSecrets(groupFolder: string): [string, string][] {
+  const secretsPath = path.join(GROUPS_DIR, groupFolder, 'secrets.env');
+  if (!fs.existsSync(secretsPath)) return [];
+
+  try {
+    const plaintext = execFileSync(
+      'sops',
+      [
+        'decrypt',
+        '--input-type',
+        'dotenv',
+        '--output-type',
+        'dotenv',
+        secretsPath,
+      ],
+      { encoding: 'utf-8', timeout: 10_000 },
+    );
+
+    return plaintext
+      .split('\n')
+      .filter((line) => line.includes('=') && !line.startsWith('#'))
+      .map((line) => {
+        const eq = line.indexOf('=');
+        return [line.slice(0, eq), line.slice(eq + 1)] as [string, string];
+      });
+  } catch (err) {
+    logger.warn(
+      { groupFolder, error: (err as Error).message },
+      'Failed to decrypt group secrets — container will have no group secrets',
+    );
+    return [];
+  }
+}
+
 async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  groupFolder: string,
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
@@ -270,6 +310,18 @@ async function buildContainerArgs(
     }
   }
 
+  // Inject per-group SOPS-encrypted secrets as environment variables
+  const groupSecrets = decryptGroupSecrets(groupFolder);
+  for (const [key, value] of groupSecrets) {
+    args.push('-e', `${key}=${value}`);
+  }
+  if (groupSecrets.length > 0) {
+    logger.info(
+      { containerName, count: groupSecrets.length },
+      'Group secrets injected',
+    );
+  }
+
   args.push(CONTAINER_IMAGE);
 
   return args;
@@ -296,6 +348,7 @@ export async function runContainerAgent(
   const containerArgs = await buildContainerArgs(
     mounts,
     containerName,
+    group.folder,
     agentIdentifier,
   );
 
