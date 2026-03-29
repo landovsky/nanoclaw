@@ -429,8 +429,16 @@ async function runQuery(
           },
         },
         'memory-store': {
-          type: 'http',
-          url: 'http://host.docker.internal:8051/mcp/',
+          command: 'node',
+          args: [path.join(path.dirname(mcpServerPath), 'memory-store-proxy.js')],
+          env: {
+            MEMORY_STORE_URL: 'http://host.docker.internal:8051/mcp',
+            NODE_USE_ENV_PROXY: '0',
+            HTTP_PROXY: '',
+            HTTPS_PROXY: '',
+            http_proxy: '',
+            https_proxy: '',
+          },
         },
       },
       hooks: {
@@ -448,7 +456,15 @@ async function runQuery(
 
     if (message.type === 'system' && message.subtype === 'init') {
       newSessionId = message.session_id;
+      const mcpStatus = (message as { mcp_servers?: { name: string; status: string }[] }).mcp_servers;
       log(`Session initialized: ${newSessionId}`);
+      if (mcpStatus) {
+        for (const srv of mcpStatus) {
+          log(`MCP server: ${srv.name} → ${srv.status}`);
+        }
+      } else {
+        log('MCP server status: not reported in init message');
+      }
     }
 
     if (message.type === 'system' && (message as { subtype?: string }).subtype === 'task_notification') {
