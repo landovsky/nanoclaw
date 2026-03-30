@@ -70,7 +70,7 @@ During each cycle, assess every unlabelled issue against three criteria:
 
 ```bash
 # Example: issue is incomplete
-export GH_TOKEN=$(/home/tomas/.dotfiles/bin/github-app-token)
+export GH_TOKEN="$GITHUB_APP_TOKEN"
 gh issue edit --repo landovsky/nanoclaw-tasks <N> --add-label blocked
 gh issue comment --repo landovsky/nanoclaw-tasks <N> --body "Needs clarification before this can be approved:
 1. What date range should the report cover?
@@ -89,7 +89,7 @@ Pick approved issues, smallest scope first:
 
 ```bash
 # Get app token for bot identity
-export GH_TOKEN=$(/home/tomas/.dotfiles/bin/github-app-token)
+export GH_TOKEN="$GITHUB_APP_TOKEN"
 
 # Signal start
 gh issue comment --repo landovsky/nanoclaw-tasks <number> \
@@ -142,17 +142,21 @@ Two tokens, two purposes:
 
 | Token | Source | Use for |
 |-------|--------|---------|
-| `GITHUB_TOKEN` | `~/.dotfiles/.github_token` | Reading issues, listing labels |
-| App token | `/home/tomas/.dotfiles/bin/github-app-token` | Posting comments as `nanoclaw-agent-kopernici[bot]` |
+| `GITHUB_TOKEN` | Default `gh` auth / env | Reading issues, listing labels |
+| `GITHUB_APP_TOKEN` | Injected in the todo-cycle prompt (pre-generated on host) | Posting comments as `nanoclaw-agent-kopernici[bot]` |
 
-**Rule**: Always use the app token (`GH_TOKEN`) when commenting so comments appear as the bot, not as Tomas. Use `GITHUB_TOKEN` (or default `gh` auth) for reads.
+**Rule**: Always set `GH_TOKEN` to the app token when commenting so comments appear as the bot, not as Tomas. Use default auth for reads.
+
+The app token is a short-lived GitHub App installation token (1 hour). It is generated on the host before the container starts and passed in the cycle prompt. **Do not try to run `/home/tomas/.dotfiles/bin/github-app-token`** — that script is on the host and not available inside the container.
 
 ```bash
-# Pattern for commenting
-export GH_TOKEN=$(/home/tomas/.dotfiles/bin/github-app-token)
+# Pattern for commenting (GITHUB_APP_TOKEN is provided in the cycle prompt)
+export GH_TOKEN="$GITHUB_APP_TOKEN"
 gh issue comment --repo landovsky/nanoclaw-tasks <number> --body "..."
 unset GH_TOKEN  # revert to default auth for subsequent reads
 ```
+
+If `GITHUB_APP_TOKEN` is empty or not set, **skip commenting** and report the issue in Slack. Do not fall back to the default token (that would post as `landovsky`).
 
 ## Delegation to Andy
 
@@ -196,6 +200,7 @@ The cron job (`17 */4 * * *`) triggers the cycle via IPC. When executing a cycle
 - **Bot identity** for all comments (use app token)
 - Comments from Claude show as `nanoclaw-agent-kopernici[bot]`
 - Comments from Tomas show as `landovsky`
+- **Always include GitHub issue links in Slack messages** — every issue reference in chat summaries, status updates, or delegation notices must include the full URL (`https://github.com/landovsky/nanoclaw-tasks/issues/<N>`) so Tomas can tap through from Slack to the issue body
 
 ## Quick Reference
 
@@ -214,7 +219,7 @@ gh issue edit --repo landovsky/nanoclaw-tasks <N> --add-label approved
 gh issue edit --repo landovsky/nanoclaw-tasks <N> --remove-label approved --add-label blocked
 
 # Comment as bot
-export GH_TOKEN=$(/home/tomas/.dotfiles/bin/github-app-token)
+export GH_TOKEN="$GITHUB_APP_TOKEN"
 gh issue comment --repo landovsky/nanoclaw-tasks <N> --body "..."
 
 # Move to review (after work is done)
