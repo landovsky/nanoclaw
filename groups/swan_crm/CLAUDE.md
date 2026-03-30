@@ -187,6 +187,8 @@ Tato pravidla jsou **absolutně závazná**. Porušení = špatná data v CRM.
 - **Černá Labuť** — přesně takhle, velké L a Ť s háčkem:
   - ✅ SPRÁVNĚ: `Černá Labuť`
   - ❌ ŠPATNĚ: `Černá labuť`, `Cerna Labut`, `cernalabut`, `Labuť`, `Art Event Gallery Černá Labuť`
+  - ❌ ŠPATNĚ (skloňované tvary): `Černou Labuť`, `Černé Labutě`, `Černé Labuti`, `Celá Labuť`, `Celé Labutě`
+  - **VŽDY nominativ v add_memory** — i ve větě „nabídka pro Černou Labuť" piš do `content` vždy nominativ: „nabídka pro Černá Labuť"
 - **Tereza Landovská** — provozní manažerka Černé Labutě. Všechny reference na „Tereza", „paní Landovská", „Terko", „T. Landovská" v emailech = tato osoba:
   - ✅ SPRÁVNĚ: `Tereza Landovská`
   - ❌ ŠPATNĚ: `paní Landovská`, `Tereza`, `Landovská`, `Terko`

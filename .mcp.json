@@ -1,7 +1,7 @@
 {
   "mcpServers": {
     "memory-store": {
-      "type": "url",
+      "type": "http",
       "url": "http://localhost:8051/mcp"
     }
   }
