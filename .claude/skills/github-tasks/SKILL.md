@@ -166,13 +166,15 @@ When an approved issue requires swan_crm work (CRM, venues, prospects, emails):
 cat > /home/tomas/git/nanoclaw/data/ipc/swan_crm/tasks/task-$(date +%Y%m%d-%H%M).json << 'EOF'
 {
   "type": "schedule_task",
-  "prompt": "Task description for Andy...",
+  "prompt": "GitHub issue #<N>: <title>\nLink: https://github.com/landovsky/nanoclaw-tasks/issues/<N>\n\n<task description with full context from the issue body>",
   "targetJid": "slack:C0APKCNF4KE",
   "schedule_type": "once",
   "schedule_value": "NOW"
 }
 EOF
 ```
+
+**Always include the issue URL and number in the prompt** — Andy needs this to reference the issue in Slack messages and to post results back to the correct issue.
 
 After delegating, comment on the issue that work was delegated to Andy.
 
