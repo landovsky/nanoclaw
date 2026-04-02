@@ -254,6 +254,8 @@ The research is unambiguous. This section is a decision framework, not a recomme
 2. If recall@5 >= 80%: the English model is surprisingly adequate. Monitor quarterly. Skip step 3.
 3. If recall@5 < 80% (likely): migrate.
 
+**Baseline result (2026-04-02):** Three independent benchmarks scored 75%, 92.5%, 70% (avg 79%). Proper names pass; pure Czech abstract queries and relationship queries fail. Full benchmark queries and methodology at [`docs/trust-benchmark-t2.1.md`](trust-benchmark-t2.1.md) — re-run post-migration to validate improvement.
+
 **Migration options ranked by evidence:**
 
 | Model | Params | Dims | Evidence | When to use |
