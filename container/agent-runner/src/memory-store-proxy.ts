@@ -31,6 +31,34 @@ import {
 
 const MCP_URL = process.env.MEMORY_STORE_URL || 'http://host.docker.internal:8051/mcp';
 
+// --- group_id validation ---
+// Prevent cross-contamination: write operations must target the correct group.
+// Read operations (search_nodes, search_memory_facts, get_*) are unrestricted.
+// The "global" group is always writable by any agent.
+// Main/slack_main agents are unrestricted (they orchestrate across all groups).
+
+const WRITE_TOOLS = new Set(['add_memory', 'delete_episode', 'delete_entity_edge', 'clear_graph']);
+
+const GROUP_FOLDER = process.env.NANOCLAW_GROUP_FOLDER ?? '';
+const UNRESTRICTED_FOLDERS = new Set(['main', 'slack_main']);
+
+/** Map group folder to its allowed write group_ids */
+function getAllowedWriteGroups(folder: string): Set<string> | null {
+  if (UNRESTRICTED_FOLDERS.has(folder)) return null; // null = no restriction
+  // Each domain folder can write to its own group_id + global
+  return new Set([folder, 'global']);
+}
+
+const ALLOWED_WRITE_GROUPS = getAllowedWriteGroups(GROUP_FOLDER);
+
+function validateGroupId(toolName: string, groupId: unknown): string | null {
+  if (!WRITE_TOOLS.has(toolName)) return null; // reads are unrestricted
+  if (ALLOWED_WRITE_GROUPS === null) return null; // main/slack_main are unrestricted
+  if (typeof groupId !== 'string' || groupId === '') return null; // no group_id = default, allow
+  if (ALLOWED_WRITE_GROUPS.has(groupId)) return null; // allowed
+  return `group_id "${groupId}" is not allowed for folder "${GROUP_FOLDER}". Allowed: ${[...ALLOWED_WRITE_GROUPS].join(', ')}`;
+}
+
 async function main() {
   // Connect to the remote HTTP MCP server as a client
   const transport = new StreamableHTTPClientTransport(new URL(MCP_URL));
@@ -63,6 +91,16 @@ async function main() {
       group_folder: process.env.NANOCLAW_GROUP_FOLDER ?? null,
     };
     process.stderr.write(`[memory-store-proxy] ${JSON.stringify(logEntry)}\n`);
+
+    // Validate group_id on write operations
+    const violation = validateGroupId(request.params.name, args?.group_id);
+    if (violation) {
+      process.stderr.write(`[memory-store-proxy] BLOCKED: ${violation}\n`);
+      return {
+        content: [{ type: 'text', text: `Blocked: ${violation}` }],
+        isError: true,
+      };
+    }
 
     const result = await client.callTool({
       name: request.params.name,
