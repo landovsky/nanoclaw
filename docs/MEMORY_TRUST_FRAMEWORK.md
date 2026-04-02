@@ -33,7 +33,7 @@ Freshness is in Tier 1 because stale facts are inaccurate facts in a CRM. Operat
 
 ---
 
-## Metrics (9 total)
+## Metrics (10 total)
 
 ### Tier 1: Data Trustworthiness (5 metrics)
 
@@ -119,21 +119,36 @@ WITH count(r) AS total,
 RETURN null_count, total, round(null_count * 100.0 / total, 1) AS null_pct
 ```
 
-### Tier 2: Retrieval Effectiveness (4 metrics)
+### Tier 2: Retrieval Effectiveness (5 metrics)
 
-#### T2.1 — Czech Query Recall (Embedding Benchmark)
-**What:** 20 known-answer queries in Czech against the live graph. Score: correct entity/fact in top-5 results.
+#### T2.1 — Czech Query Recall (Golden Dataset Benchmark)
+**What:** 30 queries with known expected entity UUIDs, tested against the live graph. Score: expected UUID appears in `search_nodes` top-5 results (binary, no subjective judgment).
 **Target:** >= 80% recall@5.
 **Frequency:** Monthly, and after any embedding model change.
-**Justification:** This is the most important metric in the framework. DaReCzech showed multilingual models outperform English-only on Czech retrieval by 10-30%. At ~1600 entities, even a 15% recall improvement means ~240 entities that become findable when previously invisible.
+**Golden dataset:** [`docs/trust-benchmark-t2.1-golden.md`](trust-benchmark-t2.1-golden.md)
 
-The benchmark must include:
-- Diacritics variations: "Cerna Labut" vs "Cerna Labut"
-- Inflected forms: "s Marketvision" (instrumental), "od Marketvision" (genitive)
-- Czech relationship queries: "Kdo je kontaktni osoba pro X?"
-- Mixed Czech-English: company names in English, query in Czech
+**Justification:** This is the most important metric in the framework. Early versions used agent-judged scoring (agent runs queries, agent decides if results are "relevant"). Three independent runs produced scores of 62.5%, 77.5%, and 92.5% — a 30pp spread that made the metric useless for tracking trends. The golden dataset eliminates this by anchoring each query to a specific UUID, making scoring deterministic and repeatable.
 
-**Action if failing:** This is the decision gate for embedding migration. See "The Embedding Problem" section below.
+**Benchmark design:**
+The 30 queries are stratified into four difficulty tiers, each testing a different retrieval capability:
+- **exact** (8 queries): query mirrors entity name — baseline sanity check
+- **synonym** (8 queries): Czech synonym, inflection, or paraphrase — tests embedding quality on Czech morphology
+- **alias** (7 queries): abbreviation or common name vs formal stored name — tests whether the graph has sufficient aliases
+- **conceptual** (7 queries): describes the entity without naming it — tests architectural limits of name-only embedding search
+
+**Baseline results (2026-04-02, A/B test):**
+
+| Difficulty | bge-small-en-v1.5 (384d) | BGE-M3 (1024d) |
+|-----------|:-:|:-:|
+| exact (8) | 100% | 100% |
+| synonym (8) | 87.5% | 87.5% |
+| alias (7) | 85.7% | 85.7% |
+| conceptual (7) | 14.3% | 28.6% |
+| **Total (30)** | **73.3%** | **76.7%** |
+
+The models differ on exactly 1 query out of 30. The embedding model is not the bottleneck. The 7 shared failures are: graph gaps (missing aliases), and architecture limitations (name-only search cannot match conceptual descriptions to brand-name entities like "Zero Latency" or "DanceDifferent").
+
+**Action if failing:** Diagnose by tier. Exact/synonym failures → embedding model problem. Alias failures → graph gap, add aliases during extraction. Conceptual failures → architecture limitation, requires hybrid name+summary search.
 
 #### T2.2 — CRM Entity Richness
 **What:** Percentage of CRM entities with >= 3 distinct active relationship types (e.g., "contact_person", "email", "status", "located_in" each count as one type).
@@ -191,6 +206,26 @@ Example scenarios:
 **Justification:** Circuit-breaker metric. If the agent doesn't query memory, retrieval completeness is zero regardless of graph quality.
 **Action if failing:** Strengthen CLAUDE.md memory instructions. If persistent, add proxy-level warning on CRM task completion with zero memory reads.
 
+#### T2.5 — Retrieval Precision (False Positive Risk)
+**What:** 10 queries for things that definitely do NOT exist in the graph. Score: percentage of queries where the top results are clearly irrelevant (safe) vs confusingly plausible (misleading).
+**Target:** <= 30% misleading (i.e., >= 70% safe).
+**Frequency:** Quarterly.
+**Golden dataset:** Negative query set in [`docs/trust-benchmark-t2.1-golden.md`](trust-benchmark-t2.1-golden.md)
+
+**Justification:** T2.1 measures recall ("does the right thing come back?") but ignores precision ("does the wrong thing stay away?"). Graphiti's `search_nodes` always returns N results regardless of relevance — there is no "nothing found" signal and no confidence score. An agent querying for "veterinární klinika" gets back "IVF klinika, Klinika LaserPlastic, Urologická klinika" with no indication these are irrelevant. This is a trust problem: the agent cannot distinguish a strong match from the least-bad cosine similarity.
+
+**Baseline (2026-04-02):** 7/10 irrelevant queries returned misleadingly plausible results — the system surfaced catering entities for "restaurace sushi", clinic entities for "veterinární klinika", rental entities for "pronájem bytu." Only 3/10 were clearly safe.
+
+**Scoring criteria:**
+- **safe**: no returned entity is plausibly related to the query domain — an agent would likely ignore the results
+- **misleading**: at least one returned entity could fool an agent into believing relevant data exists (e.g., "jídlo" for a sushi query, "Klinika LaserPlastic" for a vet query)
+
+**Action if failing:** The root cause is architectural — no relevance threshold exists. Mitigation options ranked by effort:
+1. **Agent-side prompt guardrails** (low effort): instruct agents to critically evaluate whether results match the query, not blindly trust top-N
+2. **Domain-scoped search** (medium effort): add `entity_types` filtering to narrow results (e.g., search only Company entities for company queries)
+3. **Relevance gate wrapper** (medium effort): compute pairwise cosine similarity between query embedding and each result's name embedding; filter results below a threshold before returning to the agent
+4. **Upstream confidence scores** (high effort): modify Graphiti to expose cosine similarity in search results, enabling the agent to self-threshold
+
 ---
 
 ## Trust Score
@@ -220,13 +255,14 @@ Penalty multipliers: T1.2 uses `* 15` (each duplicate cluster costs 15 points --
 ### Retrieval (0-100)
 
 ```
-T2 = (T2.1_recall_pct * 0.40)
-   + (T2.2_richness_pct * 0.20)
-   + (T2.3_e2e_score * 10 * 0.25)
+T2 = (T2.1_recall_pct * 0.35)
+   + (T2.2_richness_pct * 0.15)
+   + (T2.3_e2e_score * 10 * 0.20)
    + (T2.4_engagement_pct * 0.15)
+   + (T2.5_safe_pct * 0.15)
 ```
 
-T2.1 + T2.3 together get 0.65 weight because they measure what the user experiences.
+T2.1 + T2.3 together get 0.55 weight because they measure what the user experiences. T2.5 gets 0.15 because false positives erode trust even when recall is high — an agent that confidently returns wrong information is worse than one that returns nothing.
 
 ### Thresholds
 
@@ -254,21 +290,31 @@ The research is unambiguous. This section is a decision framework, not a recomme
 2. If recall@5 >= 80%: the English model is surprisingly adequate. Monitor quarterly. Skip step 3.
 3. If recall@5 < 80% (likely): migrate.
 
-**Baseline result (2026-04-02):** Three independent benchmarks scored 75%, 92.5%, 70% (avg 79%). Proper names pass; pure Czech abstract queries and relationship queries fail. Full benchmark queries and methodology at [`docs/trust-benchmark-t2.1.md`](trust-benchmark-t2.1.md) — re-run post-migration to validate improvement.
+**Baseline result (2026-04-02, subjective):** Three independent agent-judged benchmarks scored 75%, 92.5%, 70% (avg 79%). The 30pp spread revealed the methodology was unreliable — agent scoring is not deterministic. These results are superseded by the golden dataset benchmark below.
 
-**Migration options ranked by evidence:**
+**A/B result (2026-04-02, golden dataset):** Head-to-head on 30 UUID-anchored queries:
+- bge-small-en-v1.5: 22/30 = 73.3%
+- BGE-M3: 23/30 = 76.7%
+- Difference: exactly 1 query out of 30 (+3.3pp)
 
-| Model | Params | Dims | Evidence | When to use |
-|-------|--------|------|----------|-------------|
-| BGE-M3 | 567M | 1024 | SOTA on MIRACL/MKQA multilingual | First choice. Best multilingual generalist. |
-| Seznam Czech | 15-20M | 256 | AAAI 2024: "competitive with significantly larger counterparts" | If BGE-M3 is too heavy or if Czech-only is acceptable |
-| Qwen-3-Embedding-0.6B | 600M | varies | Beats BGE-M3 by 7.9% on MMTEB | Only if BGE-M3 underperforms on Czech specifically |
+The models are effectively equivalent. The 7 shared failures are graph gaps and architecture limitations, not embedding quality. Full results at [`docs/trust-benchmark-t2.1-golden.md`](trust-benchmark-t2.1-golden.md).
 
-**Why BGE-M3 first:** Swan CRM handles both Czech and English (international clients). A multilingual model covers both. Seznam models are Czech-purpose-built but lose English. The 7.9% Qwen advantage is on general MMTEB, not Czech CRM specifically.
+**Decision:** BGE-M3 deployed (2026-04-02). Marginal improvement, no downside, architecturally correct for Czech+English content. Further embedding model changes are not justified — the bottleneck is elsewhere.
 
-**Migration cost:** Re-embed ~1600 entities + ~2800 facts. Under 5 minutes on CPU with BGE-M3. The real cost is updating Graphiti config and rebuilding Neo4j vector indices.
+**Where the bottleneck actually is:**
+1. **Graph coverage** — missing entity aliases (e.g., "Akademie věd" not linked to "Středisko společných činností AV ČR")
+2. **Name-only search** — `search_nodes` embeds entity names, not summaries. Conceptual queries ("virtuální realita zábava") cannot match brand-name entities ("Zero Latency") because the name embedding has no semantic overlap. Fix: hybrid search combining name embedding + fulltext summary search.
+3. **No relevance threshold** — see T2.5. The system always returns N results, even for completely off-topic queries.
 
-**Validation:** After migration, re-run T2.1. If improvement < 10 points, the problem is elsewhere (extraction quality, entity naming, query formulation).
+**Migration reference (for future model changes):**
+
+| Model | Params | Dims | Evidence |
+|-------|--------|------|----------|
+| BGE-M3 (deployed) | 567M | 1024 | SOTA on MIRACL/MKQA multilingual |
+| Seznam Czech | 15-20M | 256 | AAAI 2024: Czech-specific, competitive |
+| Qwen-3-Embedding-0.6B | 600M | varies | Beats BGE-M3 by 7.9% on MMTEB |
+
+Re-embedding script: `nano-claw-memory-store/scripts/reembed.py` (~4 min for full graph on CPU with BGE-M3).
 
 ---
 
@@ -413,7 +459,7 @@ Know where you stand before changing anything.
 - Weekly automated: T1.2, T1.5 (15 seconds to read)
 - Monthly manual: T1.1, T1.3, T1.4, T2.1, T2.2, T2.3 (45 min)
 - Continuous: T2.4 from proxy logs
-- Quarterly: Review staleness windows, refresh T2.1 benchmark queries
+- Quarterly: T2.5 false positive check, review staleness windows, refresh T2.1 golden dataset queries
 
 ---
 
