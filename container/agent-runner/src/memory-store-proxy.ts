@@ -51,6 +51,19 @@ async function main() {
 
   // Proxy tools/call
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    const args = request.params.arguments as Record<string, unknown> | undefined;
+
+    // Log every memory-store tool call to stderr (captured by container runner)
+    const logEntry = {
+      ts: new Date().toISOString(),
+      tool: request.params.name,
+      group_id: args?.group_id ?? null,
+      query: typeof args?.query === 'string' ? args.query.slice(0, 200) : null,
+      session: process.env.NANOCLAW_SESSION_ID ?? null,
+      group_folder: process.env.NANOCLAW_GROUP_FOLDER ?? null,
+    };
+    process.stderr.write(`[memory-store-proxy] ${JSON.stringify(logEntry)}\n`);
+
     const result = await client.callTool({
       name: request.params.name,
       arguments: request.params.arguments,
